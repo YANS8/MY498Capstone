@@ -1,0 +1,360 @@
+---
+title: "Data Analysis for MY498"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r cars}
+library(stringr)
+library(readxl)
+library(xml2)
+library(rvest)
+require(foreign)
+require(nnet)
+require(ggplot2)
+require(reshape2)
+require(MASS)
+```
+
+Get a list of restaurants from Quandoo.
+### Data Cleaning ###
+```{r}
+#### extracting urls ####
+p <- list()
+for (x in 1:498){
+  url <- paste0("https://www.quandoo.co.uk/london?page=",x)
+  h2 <- read_html(url) # reading the HTML code
+  p2 <- html_nodes(h2,"div.sc-13c4kji-4.eBDCNP")
+  p2 <- as.character(p2)
+  p2 <- strsplit(p2,'\n')
+  p <- append(p,p2)
+  
+}
+p
+
+links <- list()
+for (x in 1:498){
+  l <- html_nodes(h2,".csLoOJ") 
+  lk <- html_attr(l,"href")
+  link <- paste0("https://www.quandoo.co.uk/",lk)
+  links <- append(links,link)
+
+}
+links
+
+## trial with one webpage ###
+#url <- paste0("https://www.quandoo.co.uk/london?page=",1)
+#h2 <- read_html(url) # reading the HTML code
+#p <-html_nodes(h2,"div.sc-13c4kji-4.eBDCNP")
+#p <- as.character(p)
+#p <- strsplit(p,'\n')
+
+### NAMES ###
+names <- rep(NA,length(p))
+for (i in 1:length(p)){
+  if (length(p[[i]])==13){
+    
+    names[i] <- gsub('<div class=\"sc-13c4kji-10 fhdwEo\"><h3 data-qa=\"merchant-name\" class=\"sc-13c4kji-11 hoVGxr\">','',p[[i]][3])
+    names[i] <- gsub('</h3></div>','',names[i])
+    names[i] <- gsub('<','',names[i])
+  }
+}
+
+#names
+
+### LOCATION ###
+location<-rep(NA,length(p))
+for (i in 1:length(p)){
+  if (length(p[[i]])==13){
+    location[i] <- gsub('<span data-qa=\"merchant-location\" class=\"sc-13c4kji-7 ejiZgz\">','',p[[i]][5])
+    location[i] <- gsub('</span><div class=\"sc-13c4kji-8 iFHIOs\">','',location[i])
+  }
+}
+
+#location
+
+### review score and numbers of reviews###
+rating<-rep(NA,length(p))
+numrat<-rep(NA,length(p))
+for (i in 1:length(p)){
+  if (length(p[[i]])==13){
+    score <- gsub('<span data-qa=\"reviews-score\" class=\"sc-9ucoq5-1 ',"",p[[i]][11])
+    score <- gsub('<!-- -->/<span>6</span></span><span data-qa=\"reviews-amount\" class=\"sc-9ucoq5-2 ektTNV\">'," ",score)
+    score <- gsub('iTalEy\">',"",score)
+    score <- gsub('gwqxNe\">',"",score)
+    score <- gsub('gzjooj\">',"",score)
+    
+    score <- gsub('</span>',"",score)
+    score <- strsplit(score," ")
+    rating[i] <- score[[1]][1]
+    numrat[i] <- score[[1]][2]
+  }
+}
+#rating
+#numrat
+
+rating<-as.numeric(rating)
+numrat<-as.numeric(numrat)
+
+
+### loop and function that extracts cuisine and pricing ###
+pricing<-rep(NA,length(p))
+cuisine<-rep(NA,length(p))
+
+for (i in 1:length(p)){
+  if (length(p[[i]])==13){
+    cp <- gsub('<span data-qa=\"merchant-card-cuisine\" class=\"sc-13c4kji-9 jzMkOl\">','',p[[i]][6])
+    cp <- gsub('</span><span display=\"block\" width=\"3px\" height=\"3px\" class=\"sc-1lbf133-0 gdYCVE\"></span><p class=\"jnbc1n-0 goRiLp sc-bxivhb eziQPC\" font-family=\"averta\" font-style=\"normal\" font-weight=\"regular\" color=\"text.default\" font-size=\"mobile.body.md,mobile.body.md,mobile.body.md,desktop.body.md\" data-qa=\"merchant-price-range\">',":",cp)
+    cp<-gsub('<span class=\"jnbc1n-1 XYzoQ\">£</span>',"1",cp)
+    cp<-gsub('<span class=\"jnbc1n-1 jxsjuh\">£</span>',"0",cp)
+    cp<-gsub('</span>',"",cp)
+    cp<-gsub('</p>',"",cp)
+    cp <- strsplit(cp,":")
+    
+    cuisine[i]<-cp[[1]][1]
+    pricing[i]<-cp[[1]][2]
+  }
+}
+
+#cuisine
+#pricing
+pricing <- gsub("1000","1",pricing)
+pricing <- gsub("1100","2",pricing)
+pricing <- gsub("1110","3",pricing)
+pricing <- gsub("1111","4",pricing)
+pricing <- as.numeric(pricing)
+
+df <- data.frame(names,cuisine,pricing,location,rating,numrat)
+df1<-data.frame(names,cuisine,pricing,location)
+df2 <- na.omit(df)
+df1[1058,4]<-"City of London"
+save(df2,file="Quandoo.RData")
+save(df1,file="QuandooAll.RData")
+
+```
+
+#### Matching Areas to Boroughs ###
+```{r}
+url2 <- "https://en.wikipedia.org/wiki/List_of_areas_of_London"
+read2 <- read_html(url2)
+tabl2 <- html_table(read2,fill=T)
+length(tabl2)
+data_pop <- tabl2[[2]]
+summary(data_pop)
+table2<- data.frame(location=data_pop$Location,borough=data_pop$`London borough`)
+
+table2$borough <- as.character(table2$borough)
+table2$borough <- str_replace_all(table2$borough,'\\[[0-9]{1,2}\\]',"")
+table2$borough <- str_replace_all(table2$borough,",","/")
+table2$borough <- gsub("/.*$","",table2$borough)
+table2$borough <- gsub("City","City of London",table2$borough)
+unique(table2$borough)
+
+bigtb <-merge(df1,table2, all.x=T,by.x="location", by.y="location",incomparables = NA)
+bigtb$borough[bigtb$location=="Bank"]<-"City of London"
+bigtb$borough[bigtb$location=="Bromley Town Centre"]<-"Bromley"
+bigtb$borough[bigtb$location=="Barnet"]<-"Barnet"
+bigtb$borough[bigtb$location=="Bexley"]<-"Bexley"
+bigtb$borough[bigtb$location=="Brick Lane"]<-"Tower Hamlets"
+bigtb$borough[bigtb$location=="Camden"]<-"Camden"
+bigtb$borough[bigtb$location=="Brick Lane"]<-"Tower Hamlets"
+bigtb$borough[bigtb$location=="City"]<-"City of London"
+bigtb$borough[bigtb$location=="City of London"]<-"City of London"
+bigtb$borough[bigtb$location=="Croydon Centre"]<-"Croydon"
+bigtb$borough[bigtb$location=="Docklands"]<-"Tower Hamlets"
+bigtb$borough[bigtb$location=="Ealing Broadway"]<-"Ealing"
+bigtb$borough[bigtb$location=="Enfield"]<-"Enfield"
+bigtb$borough[bigtb$location=="Euston"]<-"Camden"
+bigtb$borough[bigtb$location=="Fenchurch Street"]<-"City of London"
+bigtb$borough[bigtb$location=="Green Park"]<-"Westminster"
+bigtb$borough[bigtb$location=="Heathrow"]<-"Hillingdon"
+bigtb$borough[bigtb$location=="High Barnet"]<-"Barnet"
+bigtb$borough[bigtb$location=="Ladbroke Grove"]<-"Kensington and Chelsea"
+bigtb$borough[bigtb$location=="Leicester Square"]<-"Westminster"
+bigtb$borough[bigtb$location=="Liverpool Street"]<-"City of London"
+bigtb$borough[bigtb$location=="London Bridge"]<-"Southwark"
+bigtb$borough[bigtb$location=="Marylebone"]<-"Westminster"
+bigtb$borough[bigtb$location=="Old Street"]<-"Islington"
+bigtb$borough[bigtb$location=="Oxford Circus"]<-"Westminster"
+bigtb$borough[bigtb$location=="Piccadilly"]<-"Westminster"
+bigtb$borough[bigtb$location=="Regent's Park"]<-"Camden"
+bigtb$borough[bigtb$location=="South Acton"]<-"Acton"
+bigtb$borough[bigtb$location=="Southbank"]<-"Lambeth"
+bigtb$borough[bigtb$location=="Southwark"]<-"Southwark"
+bigtb$borough[bigtb$location=="St Paul's"]<-"City of London"
+bigtb$borough[bigtb$location=="St. James"]<-"Westminster"
+bigtb$borough[bigtb$location=="Sutton Centrel"]<-"Sutton"
+bigtb$borough[bigtb$location=="West Finchley"]<-"Barnet"
+
+secondtb<-bigtb[complete.cases(bigtb),]
+
+summary(secondtb)
+
+library(readxl)
+london_borough_profiles <- read_excel("Data collection/london-borough-profiles.xlsx", sheet = "Sheet2", col_types = c("text", 
+"text", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric","text", "numeric", "text", "numeric", "text", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric","numeric", "numeric", "numeric"))
+london_borough_profiles <- london_borough_profiles[2:34,-4]
+
+db <- dbConnect(RSQLite::SQLite(), "Data collection/full-db.sqlite")
+dbWriteTable(db,"boroughdata",london_borough_profiles)
+
+
+london_borough_profiles <- merge(median_socio,london_borough_profiles,by.x="Borough",by.y="borough")
+bigtable <- merge(secondtb,london_borough_profiles,by.x="borough",by.y="Borough")
+
+full_table <- data.frame(restaurant=bigtable$names,bigtable[,-3])
+
+save(full_table,file="fulldata.RData")
+
+summary(full_table)
+```
+
+```{r}
+library(xml2)
+url <- "https://www.quandoo.co.uk/london"
+cui <- read_html(url) 
+cuis <- as.character(cui)
+cuis <- html_nodes(cui,".hbkxpi")
+cuiss<-
+#p <- as.character(p)
+#p <- strsplit(p,'\n')
+
+```
+
+
+### Top cuisine types ###
+Indian, Italian, British, Tukish, International, French.
+
+What are the top 3 cuisine in each borough? Does it relate to its ethnicity group living there, the socio-economic status of most residents there? 
+
+
+```{r}
+library(DBI)
+db <- dbConnect(RSQLite::SQLite(), "Data collection/full-db.sqlite")
+dbWriteTable(db,"full",full_table)
+dbWriteTable(db,"secondtb",secondtb)
+
+# Relationship between Pricing and neighbourhood household income
+small <- dbGetQuery(db, 'SELECT borough,COUNT(DISTINCT(cuisine)),"median.household.income",AVG(pricing) as pricing FROM secondtb GROUP BY borough ORDER BY COUNT(DISTINCT(cuisine)) DESC') 
+
+lms <- lm(pricing~median.household.income,data=small)
+plot(small$pricing,small$median.household.income)
+summary(lms)
+## Finding: the median household income in that borough has a positive linear relationship with the average pricing in that Borough.
+
+
+c1<-dbGetQuery(db, 'SELECT cuisine, COUNT(*) AS pricing_1
+           FROM secondtb
+           WHERE pricing="1"
+           GROUP BY cuisine
+           ORDER BY COUNT(*)') 
+c2<-dbGetQuery(db, 'SELECT cuisine, COUNT(*) AS pricing_2
+           FROM secondtb
+           WHERE pricing="2"
+           GROUP BY cuisine
+           ORDER BY COUNT(*)') 
+c3<-dbGetQuery(db, 'SELECT cuisine, COUNT(*) AS pricing_3
+           FROM secondtb
+           WHERE pricing="3"
+           GROUP BY cuisine
+           ORDER BY COUNT(*)') 
+c4<-dbGetQuery(db, 'SELECT cuisine, COUNT(*) AS pricing_4
+           FROM secondtb
+           WHERE pricing="4"
+           GROUP BY cuisine
+           ORDER BY COUNT(*)') 
+
+
+c12<-merge(c1,c2,by.y="cuisine",all.y=T,incomparables = NULL)
+c12c<-data.frame(cuisine=c12$cuisine,pricing12=c12$pricing_1+c12$pricing_2)
+c34<-merge(c3,c4,by.x = "cuisine",all.x=T,imcomparables=NULL)
+
+c1234<-merge(c12c,c34,by.y="cuisine",all.y=T,incomparables = NULL)
+tt <- dbGetQuery(db, 'SELECT cuisine,COUNT(*) AS total FROM secondtb GROUP BY cuisine ORDER BY COUNT(*) DESC') 
+tt$rank <- 1:84
+tc <- merge(c1234,tt,by.y="cuisine",all.y=T,incomparables = NULL)
+
+# leave the cuisine types that have at least 10 obs.
+tc1 <- tc[tc$total>10,]
+tc1[is.na(tc1)] <- 0
+tc1$"%Pricing1" <- percent(tc1$pricing12/tc1$total)
+tc1$"%Pricing3" <- percent(tc1$pricing_3/tc1$total)
+tc1$"%Pricing4" <- percent(tc1$pricing_4/tc1$total)
+
+result<-tc1[,-(2:4)]
+result<-result[order(result$rank),]
+result1<-data.frame(Rank=result$rank,Cuisine=result$cuisine,Total=result$total,Low=result[4],Medium=result[5],High=result[6])
+result1<-result1[order(result1$X.Pricing4,decreasing = T),]
+write.table(result1, file = "result3.txt", sep = "\t",
+            row.names = TRUE, col.names = NA)
+
+tc1
+resultComb<-data.frame(Rank=result1$Rank,Cuisine=result1$Cuisine,Total=result1$Total,pricing1.2=as.numeric(result1[4])+as.numeric(result1[5]),pricing2.3=as.numeric(result1[6])+as.numeric(result1[7]))
+result1[7]
+dbGetQuery(db, 'SELECT borough,MAX(cuisine)
+           FROM secondtb
+           GROUP BY borough
+           ORDER BY COUNT(*) DESC')
+dbDisconnect(db)
+
+for (i in unique(full_table$cuisine)){
+  
+}
+
+full_table$pricing
+  
+```
+
+E.g.: Argentinian are most pricy cuisine among all, this may due to the chain restaurant Gaucho, which is famous for its steak and ...
+
+
+#### Regression Analysis ####
+```{r} 
+### get the variables ###
+summary(full_table)
+
+### choose multinomial or plor?
+
+# testing whether two variables have correlation 
+cor.test(as.numeric(full_table$pricing),full_table$rating)
+cor.test(as.numeric(full_table$pricing),full_table$numrat) #a little more significant than rating
+cor.test(as.numeric(full_table$pricing),full_table$median.household.income) # sig
+cor.test(as.numeric(full_table$pricing),full_table$NS.SEC.1.2) # sig
+cor.test(as.numeric(full_table$pricing),full_table$NS.SEC.3.4) #not significant
+cor.test(as.numeric(full_table$pricing),full_table$NS.SEC.5.7)
+
+cor.test(as.numeric(full_table$pricing),full_table$Median.House.Price..2015) #median house price, very significant
+cor.test(as.numeric(full_table$pricing),full_table$Gross.Annual.Pay...2016.)
+cor.test(as.numeric(full_table$pricing),full_table$Average.Public.Transport.Accessibility.score..2014)
+cor.test(as.numeric(full_table$pricing),full_table$Average.Age..2017)
+cor.test(as.numeric(full_table$pricing),full_table$Achievement.of.5.or.more.A...C.grades.at.GCSE.or.equivalent.including.English.and.Maths..2013.14)
+
+cor.test(as.numeric(full_table$pricing),full_table$Overseas.nationals.entering.the.UK..NINo....2015.16.)
+
+
+##### set baseline groups/reference 
+full_table$borough <- as.factor(full_table$borough)
+full_table <- within(full_table, cuisine <- relevel(cuisine, ref = "Indian"))
+full_table <- within(full_table, borough <-relevel(borough,ref="Lambeth"))
+
+### ordinal with Pricing levels
+m<-polr(pricing~cuisine+scale(median.household.income)+scale(Median.House.Price..2015)+rating+numrat+NS.SEC.1.2,data=full_table,Hess=T)
+
+m1<-polr(pricing~cuisine+borough+scale(NS.SEC.5.7)+scale(NS.SEC.1.2)+scale(Average.Public.Transport.Accessibility.score..2014)+scale(median.household.income)+scale(Median.House.Price..2015)+Achievement.of.5.or.more.A...C.grades.at.GCSE.or.equivalent.including.English.and.Maths..2013.14+scale(Gross.Annual.Pay...2016.)+scale(Average.Age..2017),data=full_table,Hess=T)
+
+m2<-polr(pricing~borough+scale(NS.SEC.5.7)+scale(NS.SEC.1.2)+scale(Average.Public.Transport.Accessibility.score..2014)+scale(median.household.income)+scale(Median.House.Price..2015)+Achievement.of.5.or.more.A...C.grades.at.GCSE.or.equivalent.including.English.and.Maths..2013.14+scale(Gross.Annual.Pay...2016.)+scale(Average.Age..2017),data=full_table,Hess=T)
+
+m3<-polr(pricing~cuisine+numrat+rating+NS.SEC.1.2+scale(median.household.income)+scale(Median.House.Price..2015)+Achievement.of.5.or.more.A...C.grades.at.GCSE.or.equivalent.including.English.and.Maths..2013.14,data=full_table,Hess=T)
+
+##### The Core Problem of the research
+lrtest(m2,m1)
+lrtest(m3,m1)
+
+length(unique(full_table$cuisine))
+summary(m1)
+```
+
+
+
+
